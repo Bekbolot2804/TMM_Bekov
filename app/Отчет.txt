@@ -1,0 +1,301 @@
+1.	Задание
+Необходимо разработать мобильное приложение под Android с применением технологии компьютерного зрения, реализующее задачу: «Определение и отображение углов Эйлера 3D вектора положения головы человека и частоты его изменения по данным видеопотока с видеокамеры в реальном масштабе времени».
+2.	Введение
+В современном мире растёт потребность в интеллектуальных системах, способных обеспечивать надёжное распознавание лиц в реальном времени, несмотря на различные помехи и частичные перекрытия. Одной из ключевых проблем в этой области является окклюзия — ситуация, при которой лицо человека частично закрыто посторонними объектами или находится вне поля зрения камеры. Такие случаи существенно снижают точность алгоритмов компьютерного зрения и затрудняют применение биометрических систем в реальных условиях [1].
+Особую актуальность задача устранения окклюзий приобретает в контексте мобильных приложений, где важно обеспечить высокую скорость обработки видеопотока при ограниченных вычислительных ресурсах. Одним из эффективных подходов является использование информации из предыдущих кадров видеопотока для восстановления недостающих участков лица. Такой метод позволяет замещать закрытые области актуальными данными, полученными до возникновения окклюзии, что повышает устойчивость системы к временным помехам и улучшает общее качество распознавания [2].
+В рамках данного проекта была разработана экспериментальная система на платформе Android с использованием языка Kotlin и библиотеки ML Kit от Google. Основой решения стала технология Face Mesh Detection, предоставляющая возможность извлекать в реальном времени 468 трёхмерных ключевых точек лица. Это обеспечивает высокую точность анализа геометрии лица и позволяет эффективно выявлять и компенсировать участки, подверженные окклюзии [3].
+Реализация алгоритма включает в себя отслеживание положения лица в каждом кадре видеопотока, определение областей с признаками окклюзии и замещение этих участков данными из предыдущих кадров, где лицо было полностью открыто. Такой подход позволяет поддерживать стабильную и точную работу системы даже при изменении освещения, поворотах головы и других факторах, влияющих на качество видеопотока. Несмотря на возможные ограничения, связанные с качеством камеры и условиями съёмки, проведённая работа демонстрирует принципиальную возможность использования подобных технологий для автоматического устранения окклюзий в реальных условиях эксплуатации [4].
+3.	Конструкторская часть
+3.1.	Существующие аналоги
+3.1.1.	https://github.com/kby-ai/FaceAttribute-iOS 
+3.1.2.	https://github.com/haryuuno21/Occlusions
+3.1.3.	https://github.com/resxton/OcclusionDemo
+3.2.	Функциональная модульная схема программы
+Функциональная модульная схема программы показана на рисунке 1.
+ 
+Рисунок 1 – функциональная модульная схема программы
+3.3.	Схема общего алгоритма работы программы
+Схема общего алгоритма работы программы представлена на рисунке 2.
+ 
+Рисунок 2 – схема общего алгоритма работы программы
+3.4.	Описание алгоритмов основных блоков программы
+3.4.1.	Обнаружение лица
+Для обнаружения лица спользуется библиотека ML Kit Face Detection. Сначала создается экзмепляр детектора лиц с с параметром PERFORMANCE_MODE_FAST для более быстрого определения в ущерб точности. Затем входящее изображение асинхронно обрабатывается и отображается прямоугольник вокруг лица.
+val faceDetector = FaceDetection.getClient(
+FaceDetectorOptions.Builder()
+    .setPerformanceMode(FaceDetectorOptions.PERFORMANCE_MODE_FAST)
+    .build())
+
+faceDetector.process(image)
+    .addOnSuccessListener { faces ->
+        drawFaces(faces, image.width, image.height)
+    }
+    .addOnFailureListener { e ->
+        Log.e("CameraX", "Ошибка распознавания лица", e)
+    }
+    .addOnCompleteListener {
+        imageProxy.close()
+    }
+Здесь:
+1.	FaceDetection.getClient() – создает экземпляр детектора лиц
+2.	FaceDetectorOptions.Builder() – используется для настройки детектора
+3.	faceDetector.process() – асинхронный метод обработки кадров с камеры
+4.	.addOnSuccessListener { faces -> …} – обработчик успешного завершения задачи определения лиц
+5.	drawFaces() – метод для отображения прямоугольника вокруг лица
+3.4.2.	Обнаружение указательных пальцев рук
+Рука (а точнее указательные пальцы рук, которые используются как индикатор руки) определяется в методе processImageProxy с помощью ML Kit Pose Detection, а затем анализируется в drawHand. 
+val poseDetector = PoseDetection.getClient(
+    PoseDetectorOptions.Builder()
+        .setDetectorMode(PoseDetectorOptions.STREAM_MODE)
+        .build()
+)
+poseDetector.process(image)
+    .addOnSuccessListener { pose ->
+        drawHand(pose, image.width, image.height)
+    }
+    .addOnFailureListener { e ->
+        Log.e("CameraX", "Ошибка распознавания позы", e)
+    }
+
+Здесь:
+1.	PoseDetection.getClient() – создает экземпляр детектора поз
+2.	PoseDetectorOptions.Builder() – настраивает детектор поз с параметром STREAM_MODE для оптимизации для видео.
+3.	poseDetector.process() – асинхронный метод обработки позы
+4.	.addOnSuccessListener { pose -> ...} – обработчик успешного завершения задачи определения позы
+5.	drawHand() – метод для обработки позы
+3.4.3.	Обработка лица
+Обработка лица выполняется в основном потоке пользовательского интерфейса.
+private fun drawFaces(faces: List<Face>, imageWidth: Int, imageHeight: Int) {
+    overlay.post {
+        val savedFaceTemp = savedFaceView
+        overlay.removeAllViews()
+        savedFaceTemp?.let { overlay.addView(it) }
+
+        val viewWidth = previewView.width.toFloat()
+        val viewHeight = previewView.height.toFloat()
+        val scaleX = viewWidth / imageHeight
+        val scaleY = viewHeight / imageWidth
+
+        for (face in faces) {
+            val boundingBox = face.boundingBox
+            val left = (imageHeight - boundingBox.right) * scaleX
+            val top = boundingBox.top * scaleY
+            val right = (imageHeight - boundingBox.left) * scaleX
+            val bottom = boundingBox.bottom * scaleY
+            faceRect = RectF(left, top, right, bottom)
+
+            val faceView = View(this).apply {
+                layoutParams = FrameLayout.LayoutParams(faceRect!!.width().toInt(), faceRect!!.height().toInt()).apply {
+                    leftMargin = faceRect!!.left.toInt()
+                    topMargin = faceRect!!.top.toInt()
+                }
+
+                if (handVisibleFrames > 0) {
+                    setBackgroundResource(R.drawable.face_border_occluded_red)
+                } else {
+                    setBackgroundResource(R.drawable.face_border)
+                }
+            }
+            overlay.addView(faceView)
+        }
+    }
+}
+Здесь:
+1.	savedFaceTemp – сохранение чистого лица перед очисткой overlay
+2.	overlay.removeAllViews() – удаление дочерних View c overlay, чтобы убрать предыдущие рамки лиц
+3.	scaleX, scaleY – коэффициенты для пропорционального преобразования координат из системы камеры в систему PreviewView
+4.	boundingBox = face.boundingBox – объект типа Rect, содержащий координаты лица
+5.	View(this).apply { ... } – создание объекта View для отображения прямоугольника вокруг лица
+6.	handVisibleFrames – переменная количества кадров с окклюзией
+7.	setBackgroundResource() – применение того или иного прямоугольника
+3.4.4.	Обработка рук
+Обработка рук заключается в определении положения рук вблизи лица, что определяет окклюзию.
+private var handOverFaceFrames = 0
+private var noHandFrames = 0
+private var handVisibleFrames = 0
+private var handInvisibleFrames = 0
+private val NO_HAND_THRESHOLD = 5
+private val SHOW_SAVED_FACE_FRAMES = 10 
+
+private fun drawHand(pose: Pose, imageWidth: Int, imageHeight: Int) {
+    overlay.post {
+        // Получаем метки для левого и правого указательных пальцев
+        val leftHandLandmark = pose.getPoseLandmark(PoseLandmark.LEFT_INDEX)
+        val rightHandLandmark = pose.getPoseLandmark(PoseLandmark.RIGHT_INDEX)
+
+        var handDetectedAndOverFace = false
+
+        val detectedLandmarks = listOfNotNull(leftHandLandmark, rightHandLandmark)
+
+        if (detectedLandmarks.isNotEmpty()) {
+            for (landmark in detectedLandmarks) {
+                // Этот код будет выполнен для каждой обнаруженной руки (левой и/или правой)
+                // handView будет показывать положение последней обработанной руки из списка
+                val viewWidth = previewView.width.toFloat()
+                val viewHeight = previewView.height.toFloat()
+
+                val scaleX = viewWidth / imageHeight
+                val scaleY = viewHeight / imageWidth
+
+                val originalX = landmark.position.x * scaleX
+                val originalY = landmark.position.y * scaleY
+                val mirroredX = viewWidth - originalX
+
+                val handPoint = PointF(mirroredX, originalY)
+                val handRadius = 100f
+                val handRect = RectF(
+                    handPoint.x - handRadius,
+                    handPoint.y - handRadius,
+                    handPoint.x + handRadius,
+                    handPoint.y + handRadius
+                )
+
+                faceRect?.let { face ->
+                    if (RectF.intersects(face, handRect)) {
+                        handDetectedAndOverFace = true // Флаг, что хотя бы одна рука над лицом
+                    }
+                }
+            }
+        } 
+
+        // Обновляем счетчики на основе флага handDetectedAndOverFace
+        if (handDetectedAndOverFace) {
+            // Рука перекрывает лицо
+            handOverFaceFrames++
+            noHandFrames = 0
+            handVisibleFrames = SHOW_SAVED_FACE_FRAMES
+            handInvisibleFrames = 0
+        } else {
+            // Рука не перекрывает лицо или не обнаружена
+            handOverFaceFrames = 0
+            noHandFrames++
+            handInvisibleFrames++
+
+            if (noHandFrames >= NO_HAND_THRESHOLD) {
+                previewView.bitmap?.let { bitmap ->
+                    faceRect?.let { face -> // Убедимся, что faceRect не null
+                        val safeLeft = face.left.toInt().coerceAtLeast(0)
+                        val safeTop = face.top.toInt().coerceAtLeast(0)
+                        val safeWidth = face.width().toInt().coerceAtMost(bitmap.width - safeLeft)
+                        val safeHeight = face.height().toInt().coerceAtMost(bitmap.height - safeTop)
+
+                        if (safeWidth > 0 && safeHeight > 0) { // Добавлена проверка на валидность размеров
+                            savedFaceBitmap = Bitmap.createBitmap(bitmap, safeLeft, safeTop, safeWidth, safeHeight)
+                            savedFaceRect = face
+
+                            savedFaceView?.let { overlay.removeView(it) }
+                            savedFaceView = null
+                        }
+                    }
+                }
+                noHandFrames = 0
+            }
+        }
+        // Остальная логика показа сохраненного лица остается без изменений
+        // Показывать сохранённое лицо, если рука только что пропала
+        if (handVisibleFrames > 0) {
+            if (savedFaceBitmap != null && faceRect != null) { // Убедимся, что есть что и куда рисовать
+                if (savedFaceView == null) { // Создаем, если еще не создан
+                    savedFaceView = androidx.appcompat.widget.AppCompatImageView(this).apply {
+                        setImageBitmap(savedFaceBitmap)
+                        tag = "savedFace"
+                        // layoutParams будут установлены ниже, чтобы применялись каждый кадр
+                    }
+                    overlay.addView(savedFaceView) // Добавляем в overlay только один раз при создании
+                }
+
+                // Всегда обновляем позицию и размер, если view существует и faceRect доступен
+                savedFaceView?.let { view ->
+                    val newLayoutParams = FrameLayout.LayoutParams(faceRect!!.width().toInt(), faceRect!!.height().toInt()).apply {
+                        leftMargin = faceRect!!.left.toInt()
+                        topMargin = faceRect!!.top.toInt()
+                    }
+                    // Проверяем, изменились ли параметры, чтобы избежать лишних requestLayout
+                    if (view.layoutParams == null || 
+                        (view.layoutParams as FrameLayout.LayoutParams).width != newLayoutParams.width ||
+                        (view.layoutParams as FrameLayout.LayoutParams).height != newLayoutParams.height ||
+                        (view.layoutParams as FrameLayout.LayoutParams).leftMargin != newLayoutParams.leftMargin ||
+                        (view.layoutParams as FrameLayout.LayoutParams).topMargin != newLayoutParams.topMargin) {
+                        view.layoutParams = newLayoutParams
+                        // view.requestLayout() // requestLayout может быть избыточен, если overlay сам перерисовывается.
+                                             // Если лицо все еще не двигается, раскомментировать.
+                    }
+                }
+            }
+            handVisibleFrames--
+        } else {
+            if (handInvisibleFrames >= SHOW_SAVED_FACE_FRAMES) {
+                savedFaceView?.let {
+                    overlay.removeView(it)
+                    savedFaceView = null
+                }
+            }
+        }
+    }
+}
+Здесь:
+1.	handOverFaceFrames – счетчик кадров, в которых рука непрерывно обнаруживается над лицом
+2.	noHandFrames – счетчик кадров, в которых рука непрерывно не обнаруживается над лицом, используется для определения момента сохранения “чистого” лица
+3.	handVisibleFrames – счетчик-таймер. Когда рука перекрывает часть лица, этому счетчику присваивается константа, затем он уменьшается с каждым кадром, пока он больше 0, считается, что окклюзия активна.
+4.	handInvisibleFrames – счетчик кадров, в которых рука непрерывно невидима. Используется чтобы убрать подставленное лицо, если рука долго не появляется.
+5.	NO_HAND_THRESHOLD – порог для noHandFrames, если рука не над лицом в течении этого количества кадров, система сохраняет “чистое” лицо
+6.	SHOW_SAVED_FACE_FRAMES – значение, которое присваивается handVisibleFrames
+7.	leftHandLandmark, rightHandLandmark – указательные пальцы
+8.	handDetectedAndOverFace – флаг, который показывает обнаружена ли рука над лицом
+3.5.	Демонстрация работы программы
+3.5.1.	Созданная, путем закрывания рукой рта, окклюзия
+ 
+Рисунок 3 – Созданная, путем закрывания рукой рта, окклюзия
+
+
+
+
+
+
+
+
+
+
+
+3.5.2.	Отсутствие окклюзии
+ 
+Рисунок 4 – отсутствие окклюзии
+3.6.	Нюансы реализации программы
+Реализация системы определения и удаления окклюзий по видео на мобильном устройстве сопряжена с рядом технических сложностей, обусловленных ограниченными вычислительными ресурсами, качеством изображения и условиями съемки. Среди основных нюансов:
+1.	Отсутствие оптимизации – программа сильно нагружает ЦП смартфона, вызывая сильный нагрев. 
+2.	Неточность определения – если окклюзия вызвана не лицом, а, например, листком бумаги, то окклюзия определена не будет.
+3.	Слабая освещенность – в условиях слабой освещенности программа может работать с погрешностью.
+3.7.	Производительность и оптимизация вычислений
+Вычислительно сложные алгоритмы обработки изображений могут существенно замедлить работу приложения на мобильном устройстве. Снижение разрешения обрабатываемых изображений снизит вычислительную нагрузку. Использование многопоточности для распараллеливания выполнения ресурсоемких операций также улучшит производительность.
+3.7.1.	Качество изображения и условия съемки
+Качество изображения с фронтальной камеры смартфона часто бывает низким, особенно в условиях недостаточного освещения. Это может привести к снижению точности обнаружения окклюзий. Использование методов программного увеличения яркости картинки может помочь стабильнее обнаруживать окклюзии.
+3.8.	Системные требования
+3.8.1.	Операционная система: Windows 11 и выше
+3.8.2.	Android Studio 2024.3.2.15 и выше
+3.8.3.	Устройство с Android 14 и выше
+3.9.	Инструкция по установке и запуску программы
+3.9.1.	Установка Android Studio
+3.9.2.	Настройка Android устройства (включить отладку по USB)
+3.9.3.	Клонирование проекта из репозитория
+3.9.4.	Запуск приложения из Android Studio
+4.	Исследовательская часть
+Проверим идентификацию окклюзий 2 личностей на фотографиях. Фотографии открыты на мониторе. Будем использовать заднюю камеру смартфона. Проверим 2 разных статуса на фото человека: с окклюзией и без.
+ 
+Рисунок 5 – Лицо без окклюзий. Фото 1
+ 
+Рисунок 6 – Лицо с окклюзией. Фото 1
+ 
+Рисунок 7 – Лицо без окклюзий. Фото 2
+ 
+Рисунок 6 – Лицо с окклюзией. Фото 2
+Все окклюзии распознаются корректно.
+5.	Заключение
+В рамках данной  работы был разработан прототип мобильного приложения для платформы Android, демонстрирующий возможность детекции лица и определения его окклюзии (перекрытия) в реальном времени на основе видеопотока с камеры мобильного устройства. Ключевой особенностью приложения является способность не только детектировать факт перекрытия лица рукой, но и временно подменять текущее изображение лица в кадре на последнее сохраненное "чистое" изображение, а также визуально индицировать состояние окклюзии изменением цвета рамки вокруг лица. Кроме того, реализована функция переключения между фронтальной и тыльной камерами устройства.
+Для реализации поставленных задач были изучены и применены современные технологии Google ML Kit, в частности библиотеки Face Detection для обнаружения лиц и Pose Detection для отслеживания положения рук. Это позволило реализовать надежную детекцию лица и анализ его возможного перекрытия рукой с приемлемой производительностью для работы в реальном времени на мобильном устройстве. Для работы с камерой использовалась библиотека CameraX, обеспечивающая удобный и современный API для доступа к видеопотоку. Интерфейсные элементы, такие как рамка вокруг лица и отображение сохраненного изображения, были реализованы с использованием стандартных компонентов Android View и динамического изменения их свойств.
+Несмотря на возможные сложности, связанные с условиями реального использования мобильных устройств — такие как изменяющееся освещение, различные ракурсы, скорость движения объектов в кадре и производительность конкретного устройства — разработанный прототип показал корректную работу основных функций. В ходе разработки были решены задачи по точному позиционированию графических элементов (рамки и сохраненного изображения лица) относительно видеопотока, а также реализована логика для сглаживания реакции системы на кратковременные изменения (например, задержка при показе/скрытии сохраненного лица).
+Проведенная работа и реализация прототипа позволили выявить ключевые аспекты, влияющие на качество и стабильность определения окклюзии и отображения пользовательского интерфейса: точность и скорость работы моделей ML Kit, корректность преобразования координат между системой камеры и системой отображения, а также эффективное управление состоянием приложения для обеспечения плавной и интуитивно понятной работы интерфейса. Разработанное приложение может служить основой для дальнейшего развития систем, требующих анализа видимости лица или его частей в реальном времени.
+Список литературы
+1.	YOLO-FaceV2: A Scale and Occlusion Aware Face Detector. // Arxiv URL: https://arxiv.org/abs/2208.02019 (дата обращения: 04.06.2025).
+2.	Face Detection App with MLKit Android. // Medium URL: https://ibrahimcanerdogan.medium.com/face-detection-app-with-mlkit-android-696ce42d4be4 (дата обращения: 04.06.2025).
+3.	Face mesh detection | ML Kit | Google for Developers. // Google URL: https://developers.google.com/ml-kit/vision/face-mesh-detection (дата обращения: 04.06.2025).
+4.	Detect faces with ML Kit on Android | Google for Developers. // Google URL: https://developers.google.com/ml-kit/vision/face-detection/android/ (дата обращения: 04.06.2025).
